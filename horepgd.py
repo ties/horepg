@@ -16,9 +16,11 @@ import time
 import datetime
 import calendar
 
+from typing import List
+
 from horepg.horizon import ChannelMap, Listings
 from horepg.oorboekje import OorboekjeParser
-from horepg.tvheadend import tvh_get_channels, TVHXMLTVSocket
+from horepg.tvheadend import Channel, TVHeadendClient, TVHXMLTVSocket
 from horepg.xmltvdoc import XMLTVDocument
 
 def debug(msg):
@@ -62,32 +64,41 @@ def daemonize():
     redirect_stream(sys.stdout)
     redirect_stream(sys.stderr)
 
-def run_import(wanted_channels, tvhsocket, fetch_radio=False, nr_days=5):
+def run_import(wanted_channels: List[Channel], tvhsocket,
+               fetch_radio=False, nr_days=5):
     with TVHXMLTVSocket(tvhsocket) as tvh_client:
         # the Horizon API for TV channels
         chmap = ChannelMap()
         listings = Listings()
         # add listings for each of the channels
         for channel_id, channel in chmap.channel_map.items():
-            if channel['title'].lower() in (channel.lower() for channel in wanted_channels):
-                now = datetime.date.today().timetuple()
-                number = 0
-                xmltv = XMLTVDocument()
-                # channel logo
-                icon = None
-                for asset in channel['images']:
-                    if asset['assetType'] == 'station-logo-large':
-                        p = asset['url'].find('?')
-                        icon = asset['url'][:p]
-                        break
-                xmltv.addChannel(channel_id, channel['title'], icon)
-                for i in range(0, nr_days):
-                    start = int((calendar.timegm(now) + 86400 * i) * 1000) # milis
-                    end = start + (86400 * 1000)
-                    number = number + listings.obtain(xmltv, channel_id, start, end)
-                debug('Adding {:d} programmes for channel {:s}'.format(number, channel['title']))
-                # send this channel to tvh for processing
-                tvh_client.send(xmltv.document.toprettyxml(encoding='UTF-8'))
+            # Find the matching tvh_channel, skip this channel if it does not
+            # match.
+            for tvh_channel in wanted_channels:
+                if ((channel['title'].lower() ==
+                     tvh_channel.service_name.lower())):
+                    break
+            else:
+                continue
+
+            now = datetime.date.today().timetuple()
+            number = 0
+            xmltv = XMLTVDocument()
+            # channel logo
+            icon = None
+            for asset in channel['images']:
+                if asset['assetType'] == 'station-logo-large':
+                    p = asset['url'].find('?')
+                    icon = asset['url'][:p]
+                    break
+            xmltv.addChannel(channel_id, tvh_channel.channel_name, icon)
+            for i in range(0, nr_days):
+                start = int((calendar.timegm(now) + 86400 * i) * 1000) # milis
+                end = start + (86400 * 1000)
+                number = number + listings.obtain(xmltv, channel_id, start, end)
+            debug('Adding {:d} programmes for channel {:s}'.format(number, channel['title']))
+            # send this channel to tvh for processing
+            tvh_client.send(xmltv.document.toprettyxml(encoding='UTF-8'))
         # Oorboekje for radio channels
         if fetch_radio:
             parser = OorboekjeParser()
@@ -107,6 +118,7 @@ def main():
     parser.add_argument('-tvh', dest='tvh_host', metavar='HOST', default='localhost', help='the hostname of TVHeadend to fetch channels from')
     parser.add_argument('-tvh_username', dest='tvh_username', metavar='USERNAME', type=str, default='', help='the username used to login into TVHeadend')
     parser.add_argument('-tvh_password', dest='tvh_password', metavar='PASSWORD', type=str, default='', help='the password used to login into TVHeadend')
+    parser.add_argument('-b', dest='use_basic_auth', action='store_const', const=True, default=False, help='Use HTTP basic auth (deprecated)')
     parser.add_argument('-R', dest='do_radio_epg', action='store_const', const=True, default=False, help='fetch EPG data for radio channels')
     args = parser.parse_args()
 
@@ -133,7 +145,11 @@ def main():
     pid_fd.write(pid + '\n')
     pid_fd.close()
 
-    channels = tvh_get_channels(args.tvh_host, username=args.tvh_username, password=args.tvh_password)
+    tvh_client = TVHeadendClient(args.tvh_host, username=args.tvh_username,
+                                 password=args.tvh_password,
+                                 use_digest=not args.use_basic_auth)
+
+    channels = tvh_client.get_channels()
     debug('Fetching listings for {:d} channels'.format(len(channels)))
 
     if args.single_shot:

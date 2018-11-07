@@ -1,0 +1,4 @@
+.mypy_cache
+.autoenv.zsh
+.python-version
+**/*.pyc
