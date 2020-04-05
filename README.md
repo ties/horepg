@@ -1,3 +1,10 @@
+LEGACY
+------
+
+This repository added digest auth support and better name matching. However the
+original repo or [codezorgz/horepg](https://github.com/codezorz/horepg) are a
+better choice by now.
+
 horepg
 ======
 
